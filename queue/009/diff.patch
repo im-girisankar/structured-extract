@@ -1,0 +1,126 @@
+diff --git a/src/structured_extract/schema.py b/src/structured_extract/schema.py
+new file mode 100644
+index 0000000..60024b8
+--- /dev/null
++++ b/src/structured_extract/schema.py
+@@ -0,0 +1,120 @@
++"""Schema definitions: FieldSpec and Schema containers.
++
++Supported field types (as strings):
++  str, int, float, bool, date, list
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++from typing import Literal
++
++FieldType = Literal["str", "int", "float", "bool", "date", "list"]
++
++VALID_TYPES: frozenset[str] = frozenset({"str", "int", "float", "bool", "date", "list"})
++
++
++@dataclass(frozen=True)
++class FieldSpec:
++    """Specification for a single field in a schema.
++
++    Attributes:
++        name: Field key in the extracted JSON output.
++        type: One of str | int | float | bool | date | list.
++              date values must be ISO 8601 strings (YYYY-MM-DD).
++        required: Whether the field must be present in the output.
++        description: Human-readable hint used in the LLM prompt.
++    """
++
++    name: str
++    type: FieldType
++    required: bool = True
++    description: str = ""
++
++    def __post_init__(self) -> None:
++        if self.type not in VALID_TYPES:
++            raise ValueError(f"Unknown field type {self.type!r}; must be one of {sorted(VALID_TYPES)}")
++
++
++@dataclass
++class Schema:
++    """A collection of FieldSpec objects describing the desired output structure.
++
++    Attributes:
++        fields: Ordered list of FieldSpec items.
++        name: Optional schema identifier (used in prompts / error messages).
++    """
++
++    fields: list[FieldSpec] = field(default_factory=list)
++    name: str = "schema"
++
++    # ------------------------------------------------------------------ #
++    # Convenience helpers
++    # ------------------------------------------------------------------ #
++
++    def field_map(self) -> dict[str, FieldSpec]:
++        """Return a dict keyed by field name for O(1) lookup."""
++        return {f.name: f for f in self.fields}
++
++    def to_json_schema(self) -> dict:
++        """Produce a JSON-Schema-like dict for embedding in LLM prompts."""
++        properties: dict = {}
++        required_fields: list[str] = []
++
++        _type_map = {
++            "str": "string",
++            "int": "integer",
++            "float": "number",
++            "bool": "boolean",
++            "date": "string",
++            "list": "array",
++        }
++
++        for spec in self.fields:
++            prop: dict = {"type": _type_map[spec.type]}
++            if spec.description:
++                prop["description"] = spec.description
++            if spec.type == "date":
++                prop["format"] = "date"
++                prop["description"] = (
++                    (spec.description + " " if spec.description else "")
++                    + "ISO 8601 format: YYYY-MM-DD"
++                ).strip()
++            properties[spec.name] = prop
++            if spec.required:
++                required_fields.append(spec.name)
++
++        schema_dict: dict = {
++            "type": "object",
++            "title": self.name,
++            "properties": properties,
++        }
++        if required_fields:
++            schema_dict["required"] = required_fields
++        return schema_dict
++
++    @classmethod
++    def from_dict(cls, data: dict) -> Schema:
++        """Construct a Schema from a plain dict (e.g. loaded from schema.json).
++
++        Expected shape::
++
++            {
++              "name": "invoice",          # optional
++              "fields": [
++                {"name": "vendor", "type": "str", "required": true, "description": "..."},
++                ...
++              ]
++            }
++        """
++        fields_raw = data.get("fields", [])
++        specs = [
++            FieldSpec(
++                name=f["name"],
++                type=f["type"],
++                required=f.get("required", True),
++                description=f.get("description", ""),
++            )
++            for f in fields_raw
++        ]
++        return cls(fields=specs, name=data.get("name", "schema"))

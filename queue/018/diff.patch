@@ -1,0 +1,178 @@
+diff --git a/tests/test_validator.py b/tests/test_validator.py
+new file mode 100644
+index 0000000..2b027f9
+--- /dev/null
++++ b/tests/test_validator.py
+@@ -0,0 +1,172 @@
++"""Tests for validator.py â€” validate() covering all field types."""
++
++from structured_extract.schema import FieldSpec, Schema
++from structured_extract.validator import FieldError, validate
++
++# ------------------------------------------------------------------ #
++# Helpers
++# ------------------------------------------------------------------ #
++
++
++def _schema(*specs: FieldSpec) -> Schema:
++    return Schema(fields=list(specs))
++
++
++def _errors(data: dict, *specs: FieldSpec) -> list[FieldError]:
++    return validate(data, _schema(*specs))
++
++
++# ------------------------------------------------------------------ #
++# Missing required field
++# ------------------------------------------------------------------ #
++
++
++def test_missing_required_field():
++    errs = _errors({}, FieldSpec("vendor", "str", required=True))
++    assert len(errs) == 1
++    assert errs[0].error_type == "missing"
++    assert errs[0].field == "vendor"
++
++
++def test_missing_optional_field_no_error():
++    errs = _errors({}, FieldSpec("notes", "str", required=False))
++    assert errs == []
++
++
++# ------------------------------------------------------------------ #
++# str
++# ------------------------------------------------------------------ #
++
++
++def test_str_valid():
++    assert _errors({"x": "hello"}, FieldSpec("x", "str")) == []
++
++
++def test_str_wrong_type():
++    errs = _errors({"x": 123}, FieldSpec("x", "str"))
++    assert any(e.error_type == "type" for e in errs)
++
++
++# ------------------------------------------------------------------ #
++# int
++# ------------------------------------------------------------------ #
++
++
++def test_int_valid():
++    assert _errors({"x": 42}, FieldSpec("x", "int")) == []
++
++
++def test_int_numeric_string_valid():
++    # numeric string is accepted (validator is lenient)
++    assert _errors({"x": "42"}, FieldSpec("x", "int")) == []
++
++
++def test_int_bool_rejected():
++    errs = _errors({"x": True}, FieldSpec("x", "int"))
++    assert any(e.error_type == "type" for e in errs)
++
++
++def test_int_bad_string():
++    errs = _errors({"x": "abc"}, FieldSpec("x", "int"))
++    assert errs[0].error_type == "type"
++
++
++# ------------------------------------------------------------------ #
++# float
++# ------------------------------------------------------------------ #
++
++
++def test_float_valid():
++    assert _errors({"x": 3.14}, FieldSpec("x", "float")) == []
++
++
++def test_float_int_valid():
++    assert _errors({"x": 10}, FieldSpec("x", "float")) == []
++
++
++def test_float_numeric_string_valid():
++    assert _errors({"x": "3.14"}, FieldSpec("x", "float")) == []
++
++
++def test_float_bool_rejected():
++    errs = _errors({"x": False}, FieldSpec("x", "float"))
++    assert any(e.error_type == "type" for e in errs)
++
++
++# ------------------------------------------------------------------ #
++# bool
++# ------------------------------------------------------------------ #
++
++
++def test_bool_valid():
++    assert _errors({"x": True}, FieldSpec("x", "bool")) == []
++
++
++def test_bool_string_truthy():
++    assert _errors({"x": "true"}, FieldSpec("x", "bool")) == []
++    assert _errors({"x": "yes"}, FieldSpec("x", "bool")) == []
++
++
++def test_bool_string_falsy():
++    assert _errors({"x": "false"}, FieldSpec("x", "bool")) == []
++    assert _errors({"x": "no"}, FieldSpec("x", "bool")) == []
++
++
++def test_bool_invalid_string():
++    errs = _errors({"x": "maybe"}, FieldSpec("x", "bool"))
++    assert errs[0].error_type == "type"
++
++
++# ------------------------------------------------------------------ #
++# date
++# ------------------------------------------------------------------ #
++
++
++def test_date_valid_iso():
++    assert _errors({"x": "2024-03-15"}, FieldSpec("x", "date")) == []
++
++
++def test_date_wrong_format():
++    errs = _errors({"x": "15/03/2024"}, FieldSpec("x", "date"))
++    assert errs[0].error_type == "format"
++
++
++def test_date_non_string():
++    errs = _errors({"x": 20240315}, FieldSpec("x", "date"))
++    assert errs[0].error_type == "type"
++
++
++# ------------------------------------------------------------------ #
++# list
++# ------------------------------------------------------------------ #
++
++
++def test_list_valid():
++    assert _errors({"x": [1, 2, 3]}, FieldSpec("x", "list")) == []
++
++
++def test_list_wrong_type():
++    errs = _errors({"x": "not-a-list"}, FieldSpec("x", "list"))
++    assert errs[0].error_type == "type"
++
++
++# ------------------------------------------------------------------ #
++# Extra keys
++# ------------------------------------------------------------------ #
++
++
++def test_extra_key_reported():
++    errs = _errors({"name": "Alice", "ghost": "extra"}, FieldSpec("name", "str"))
++    extra_errs = [e for e in errs if e.field == "ghost"]
++    assert extra_errs, "Expected an error for undeclared field 'ghost'"
++
++
++# ------------------------------------------------------------------ #
++# FieldError str representation
++# ------------------------------------------------------------------ #
++
++
++def test_field_error_str():
++    e = FieldError(field="amount", error_type="missing", message="Required field 'amount' is absent")
++    assert "missing" in str(e)
++    assert "amount" in str(e)

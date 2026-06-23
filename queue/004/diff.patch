@@ -1,0 +1,107 @@
+diff --git a/src/structured_extract/cli.py b/src/structured_extract/cli.py
+new file mode 100644
+index 0000000..36f2c3d
+--- /dev/null
++++ b/src/structured_extract/cli.py
+@@ -0,0 +1,101 @@
++"""CLI entry-point: ``sx extract --schema <schema.json> <doc.txt>``.
++
++Uses MockExtractor by default (offline-safe).
++If ANTHROPIC_API_KEY is set in the environment and anthropic is installed,
++uses LLMExtractor automatically.
++
++Output: pretty-printed JSON with an injected ``_confidence`` key.
++"""
++
++from __future__ import annotations
++
++import argparse
++import json
++import os
++import sys
++
++from structured_extract.confidence import compute_confidence
++from structured_extract.extractor import MockExtractor
++from structured_extract.pipeline import extract_with_retry
++from structured_extract.schema import Schema
++
++
++def _build_extractor(schema: Schema):  # noqa: ANN201
++    """Return an LLMExtractor if anthropic is available and key is set, else MockExtractor."""
++    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
++    if api_key:
++        try:
++            from structured_extract.extractor import LLMExtractor
++
++            return LLMExtractor(api_key=api_key)
++        except ImportError:
++            pass  # fall through to mock
++
++    # Offline fallback: a mock that returns empty dict (shows confidence = 0 for all)
++    print(
++        "[sx] No ANTHROPIC_API_KEY / anthropic package found â€” using MockExtractor (empty output).",
++        file=sys.stderr,
++    )
++    return MockExtractor([{}])
++
++
++def _run_extract(args: argparse.Namespace) -> None:
++    # Load schema
++    try:
++        with open(args.schema) as fh:
++            schema_data = json.load(fh)
++    except (FileNotFoundError, json.JSONDecodeError) as exc:
++        print(f"[sx] Error loading schema: {exc}", file=sys.stderr)
++        sys.exit(1)
++
++    schema = Schema.from_dict(schema_data)
++
++    # Load document
++    try:
++        with open(args.document) as fh:
++            text = fh.read()
++    except FileNotFoundError as exc:
++        print(f"[sx] Error loading document: {exc}", file=sys.stderr)
++        sys.exit(1)
++
++    extractor = _build_extractor(schema)
++    result = extract_with_retry(text, schema, extractor, max_retries=args.retries)
++
++    confidence = compute_confidence(result.data, schema)
++
++    output = dict(result.data)
++    output["_confidence"] = confidence
++    output["_valid"] = result.valid
++    output["_attempts"] = result.attempts
++
++    if result.errors:
++        output["_errors"] = [str(e) for e in result.errors]
++
++    print(json.dumps(output, indent=2, ensure_ascii=False))
++
++
++def main(argv: list[str] | None = None) -> None:
++    parser = argparse.ArgumentParser(
++        prog="sx",
++        description="structured-extract: extract structured JSON from documents",
++    )
++    sub = parser.add_subparsers(dest="command")
++
++    extract_p = sub.add_parser("extract", help="Extract structured data from a document")
++    extract_p.add_argument("--schema", required=True, metavar="SCHEMA_JSON", help="Path to schema JSON file")
++    extract_p.add_argument("document", metavar="DOC_TXT", help="Path to plain-text document")
++    extract_p.add_argument(
++        "--retries",
++        type=int,
++        default=2,
++        metavar="N",
++        help="Maximum self-correction retries (default: 2)",
++    )
++
++    parsed = parser.parse_args(argv)
++
++    if parsed.command == "extract":
++        _run_extract(parsed)
++    else:
++        parser.print_help()
++        sys.exit(0)

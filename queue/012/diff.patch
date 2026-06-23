@@ -1,0 +1,82 @@
+diff --git a/tests/test_cli.py b/tests/test_cli.py
+new file mode 100644
+index 0000000..cecb826
+--- /dev/null
++++ b/tests/test_cli.py
+@@ -0,0 +1,76 @@
++"""CLI smoke tests for sx extract (offline â€” uses MockExtractor via ANTHROPIC_API_KEY absent)."""
++
++from __future__ import annotations
++
++import json
++import os
++from pathlib import Path
++from unittest.mock import patch
++
++import pytest
++
++from structured_extract.cli import main
++
++
++@pytest.fixture()
++def schema_file(tmp_path: Path) -> Path:
++    data = {
++        "name": "invoice",
++        "fields": [
++            {"name": "vendor", "type": "str", "required": True, "description": "Supplier"},
++            {"name": "amount", "type": "float", "required": True, "description": "Total"},
++            {"name": "issued_on", "type": "date", "required": True, "description": "Date"},
++        ],
++    }
++    p = tmp_path / "schema.json"
++    p.write_text(json.dumps(data))
++    return p
++
++
++@pytest.fixture()
++def doc_file(tmp_path: Path) -> Path:
++    p = tmp_path / "invoice.txt"
++    p.write_text("Invoice from Acme Corp. Total: $250.00. Date: 2024-01-15.")
++    return p
++
++
++def test_cli_smoke_mock_extractor(schema_file, doc_file, tmp_path, capsys):
++    """sx extract with no API key falls back to MockExtractor (empty dict)."""
++    with patch.dict(os.environ, {}, clear=True):
++        # Remove ANTHROPIC_API_KEY if present
++        env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
++        with patch.dict(os.environ, env, clear=True):
++            main(["extract", "--schema", str(schema_file), str(doc_file)])
++
++    captured = capsys.readouterr()
++    output = json.loads(captured.out)
++    # Empty extraction â†’ _valid False, _confidence all 0.0
++    assert "_confidence" in output
++    assert "_valid" in output
++    assert output["_valid"] is False  # empty mock can't satisfy required fields
++
++
++def test_cli_missing_schema_exits(doc_file, capsys):
++    with pytest.raises(SystemExit) as exc_info:
++        main(["extract", "--schema", "/nonexistent/schema.json", str(doc_file)])
++    assert exc_info.value.code != 0
++
++
++def test_cli_missing_doc_exits(schema_file, capsys):
++    with pytest.raises(SystemExit) as exc_info:
++        main(["extract", "--schema", str(schema_file), "/nonexistent/doc.txt"])
++    assert exc_info.value.code != 0
++
++
++def test_cli_no_subcommand_exits(capsys):
++    with pytest.raises(SystemExit):
++        main([])
++
++
++def test_cli_retries_flag(schema_file, doc_file, capsys):
++    """--retries flag is accepted and passed through."""
++    with patch.dict(os.environ, {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}, clear=True):
++        main(["extract", "--schema", str(schema_file), "--retries", "1", str(doc_file)])
++    captured = capsys.readouterr()
++    output = json.loads(captured.out)
++    assert "_attempts" in output

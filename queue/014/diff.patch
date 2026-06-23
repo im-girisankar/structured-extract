@@ -1,0 +1,165 @@
+diff --git a/tests/test_eval.py b/tests/test_eval.py
+new file mode 100644
+index 0000000..c479f4d
+--- /dev/null
++++ b/tests/test_eval.py
+@@ -0,0 +1,159 @@
++"""Tests for eval.py â€” precision/recall/F1 computation."""
++
++import pytest
++
++from structured_extract.eval import FieldMetrics, evaluate
++
++# ------------------------------------------------------------------ #
++# Perfect extraction
++# ------------------------------------------------------------------ #
++
++
++def test_perfect_extraction():
++    extractions = [{"vendor": "Acme", "amount": "250.00"}]
++    golds = [{"vendor": "Acme", "amount": "250.00"}]
++    result = evaluate(extractions, golds)
++    assert result.micro_precision == pytest.approx(1.0)
++    assert result.micro_recall == pytest.approx(1.0)
++    assert result.micro_f1 == pytest.approx(1.0)
++
++
++# ------------------------------------------------------------------ #
++# Completely missed extraction
++# ------------------------------------------------------------------ #
++
++
++def test_empty_extraction():
++    extractions = [{}]
++    golds = [{"vendor": "Acme", "amount": "250.00"}]
++    result = evaluate(extractions, golds)
++    assert result.micro_precision == pytest.approx(0.0)
++    assert result.micro_recall == pytest.approx(0.0)
++
++
++# ------------------------------------------------------------------ #
++# Partial: one field correct, one missing
++# ------------------------------------------------------------------ #
++
++
++def test_partial_extraction():
++    extractions = [{"vendor": "Acme"}]
++    golds = [{"vendor": "Acme", "amount": "250.00"}]
++    result = evaluate(extractions, golds)
++    # vendor: TP=1, amount: FN=1 â†’ recall = 1/2
++    assert result.micro_recall == pytest.approx(0.5)
++    assert result.micro_precision == pytest.approx(1.0)
++
++
++# ------------------------------------------------------------------ #
++# Wrong value counts as FP not TP
++# ------------------------------------------------------------------ #
++
++
++def test_wrong_value_lowers_precision():
++    extractions = [{"vendor": "WrongCorp"}]
++    golds = [{"vendor": "Acme"}]
++    result = evaluate(extractions, golds)
++    assert result.micro_precision == pytest.approx(0.0)
++    assert result.micro_recall == pytest.approx(0.0)
++
++
++# ------------------------------------------------------------------ #
++# String normalisation: case-insensitive, whitespace-collapsed
++# ------------------------------------------------------------------ #
++
++
++def test_normalisation_case_insensitive():
++    extractions = [{"vendor": "acme corp"}]
++    golds = [{"vendor": "ACME CORP"}]
++    result = evaluate(extractions, golds, fields=["vendor"])
++    assert result.micro_precision == pytest.approx(1.0)
++
++
++def test_normalisation_whitespace():
++    extractions = [{"vendor": "  Acme  Corp  "}]
++    golds = [{"vendor": "Acme Corp"}]
++    result = evaluate(extractions, golds, fields=["vendor"])
++    assert result.micro_precision == pytest.approx(1.0)
++
++
++# ------------------------------------------------------------------ #
++# Numeric equivalence: "42" == 42
++# ------------------------------------------------------------------ #
++
++
++def test_numeric_string_matches_int():
++    extractions = [{"count": "42"}]
++    golds = [{"count": 42}]
++    result = evaluate(extractions, golds, fields=["count"])
++    assert result.micro_precision == pytest.approx(1.0)
++
++
++# ------------------------------------------------------------------ #
++# Multi-document eval
++# ------------------------------------------------------------------ #
++
++
++def test_multi_document_aggregation():
++    extractions = [
++        {"vendor": "Acme", "amount": "100.00"},
++        {"vendor": "Beta"},  # missing amount
++    ]
++    golds = [
++        {"vendor": "Acme", "amount": "100.00"},
++        {"vendor": "Beta", "amount": "200.00"},
++    ]
++    result = evaluate(extractions, golds)
++    # TP=3 (vendorÃ—2 + amountÃ—1), FN=1 (amount in doc2)
++    assert result.micro_recall == pytest.approx(3 / 4)
++
++
++# ------------------------------------------------------------------ #
++# Explicit field list restricts evaluation
++# ------------------------------------------------------------------ #
++
++
++def test_explicit_field_list():
++    extractions = [{"vendor": "Acme", "noise": "junk"}]
++    golds = [{"vendor": "Acme", "noise": "different"}]
++    result = evaluate(extractions, golds, fields=["vendor"])
++    assert "noise" not in result.field_metrics
++    assert result.micro_precision == pytest.approx(1.0)
++
++
++# ------------------------------------------------------------------ #
++# Mismatched lengths raise
++# ------------------------------------------------------------------ #
++
++
++def test_mismatched_lengths_raise():
++    with pytest.raises(ValueError):
++        evaluate([{}], [{}, {}])
++
++
++# ------------------------------------------------------------------ #
++# Wrong value must count as FN (drops recall), not just FP
++# ------------------------------------------------------------------ #
++
++
++def test_wrong_value_drops_micro_recall():
++    """A present-but-incorrect value must increment FN so recall falls below 1.0."""
++    extractions = [{"vendor": "WrongCorp", "amount": "100.00"}]
++    golds = [{"vendor": "Acme", "amount": "100.00"}]
++    result = evaluate(extractions, golds)
++    # vendor: FP=1, FN=1 (wrong value); amount: TP=1
++    # total TP=1, FN=1 â†’ micro_recall = 1/2 < 1.0
++    assert result.micro_recall < 1.0
++    assert result.micro_recall == pytest.approx(0.5)
++
++
++# ------------------------------------------------------------------ #
++# FieldMetrics.compute
++# ------------------------------------------------------------------ #
++
++
++def test_field_metrics_zero_denominator():
++    m = FieldMetrics.compute("x", tp=0, fp=0, fn=0)
++    assert m.precision == 0.0
++    assert m.recall == 0.0
++    assert m.f1 == 0.0

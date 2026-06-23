@@ -1,0 +1,19 @@
+diff --git a/examples/doc3.txt b/examples/doc3.txt
+new file mode 100644
+index 0000000..26675d2
+--- /dev/null
++++ b/examples/doc3.txt
+@@ -0,0 +1,13 @@
++Tax Invoice
++-----------
++Supplier  : MedEquip Distributors
++Inv. Ref  : ME-2024-0392
++Issue Date: 15-02-2024
++
++Product list:
++  1. Pulse Oximeter (Qty 10)   $45.00 each   = $450.00
++  2. Exam Gloves Box (Qty 50)  $12.00 each   = $600.00
++  3. Sterile Swabs Pack        $8.50          =   $8.50
++
++Grand Total: USD 1,058.50
++Payment: Outstanding

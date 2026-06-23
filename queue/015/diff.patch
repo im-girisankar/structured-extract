@@ -1,0 +1,79 @@
+diff --git a/tests/test_extractor.py b/tests/test_extractor.py
+new file mode 100644
+index 0000000..43b8701
+--- /dev/null
++++ b/tests/test_extractor.py
+@@ -0,0 +1,73 @@
++"""Tests for extractor.py â€” MockExtractor and the Extractor protocol."""
++
++import pytest
++
++from structured_extract.extractor import Extractor, MockExtractor
++from structured_extract.schema import FieldSpec, Schema
++
++
++@pytest.fixture()
++def simple_schema() -> Schema:
++    return Schema(
++        fields=[
++            FieldSpec("vendor", "str"),
++            FieldSpec("amount", "float"),
++        ]
++    )
++
++
++def test_mock_extractor_single_response(simple_schema):
++    mock = MockExtractor([{"vendor": "Acme", "amount": 99.0}])
++    result = mock.extract("some text", simple_schema)
++    assert result == {"vendor": "Acme", "amount": 99.0}
++    assert mock.call_count == 1
++
++
++def test_mock_extractor_cycles_through_responses(simple_schema):
++    mock = MockExtractor([
++        {"vendor": None, "amount": "bad"},
++        {"vendor": "Beta", "amount": 50.0},
++    ])
++    first = mock.extract("doc", simple_schema)
++    second = mock.extract("doc", simple_schema)
++    assert first["vendor"] is None
++    assert second["vendor"] == "Beta"
++    assert mock.call_count == 2
++
++
++def test_mock_extractor_repeats_last_when_exhausted(simple_schema):
++    mock = MockExtractor([{"vendor": "X", "amount": 1.0}])
++    mock.extract("doc", simple_schema)
++    second = mock.extract("doc", simple_schema)
++    assert second["vendor"] == "X"
++
++
++def test_mock_extractor_returns_copy(simple_schema):
++    """Mutating the returned dict must not affect internal state."""
++    mock = MockExtractor([{"vendor": "Acme", "amount": 10.0}])
++    result = mock.extract("doc", simple_schema)
++    result["vendor"] = "MUTATED"
++    result2 = mock.extract("doc", simple_schema)
++    assert result2["vendor"] == "Acme"
++
++
++def test_mock_extractor_empty_raises():
++    with pytest.raises(ValueError):
++        MockExtractor([])
++
++
++def test_mock_extractor_satisfies_protocol(simple_schema):
++    mock = MockExtractor([{}])
++    assert isinstance(mock, Extractor)
++
++
++def test_mock_records_call_args(simple_schema):
++    mock = MockExtractor([{"vendor": "Z", "amount": 0.0}])
++    mock.extract("hello world", simple_schema)
++    assert mock.call_args[0][0] == "hello world"
++    assert mock.call_args[0][1] is simple_schema
++
++
++def test_llm_extractor_importable_without_anthropic():
++    """Importing LLMExtractor must not raise even when anthropic is absent."""
++    from structured_extract.extractor import LLMExtractor  # noqa: F401

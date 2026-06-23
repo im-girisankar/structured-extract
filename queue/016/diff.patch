@@ -1,0 +1,125 @@
+diff --git a/tests/test_pipeline.py b/tests/test_pipeline.py
+new file mode 100644
+index 0000000..d2cada8
+--- /dev/null
++++ b/tests/test_pipeline.py
+@@ -0,0 +1,119 @@
++"""Tests for pipeline.py â€” extract_with_retry self-correction loop."""
++
++import pytest
++
++from structured_extract.extractor import MockExtractor
++from structured_extract.pipeline import ExtractionResult, extract_with_retry
++from structured_extract.schema import FieldSpec, Schema
++
++
++@pytest.fixture()
++def invoice_schema() -> Schema:
++    return Schema(
++        fields=[
++            FieldSpec("vendor", "str", required=True, description="Supplier name"),
++            FieldSpec("amount", "float", required=True, description="Total amount"),
++            FieldSpec("issued_on", "date", required=True, description="Invoice date"),
++        ],
++        name="invoice",
++    )
++
++
++DOC = "Invoice from Acme Corp, total $250.00, dated 2024-01-15."
++
++
++# ------------------------------------------------------------------ #
++# Happy path â€” first attempt succeeds
++# ------------------------------------------------------------------ #
++
++
++def test_success_on_first_attempt(invoice_schema):
++    mock = MockExtractor([{"vendor": "Acme Corp", "amount": 250.0, "issued_on": "2024-01-15"}])
++    result = extract_with_retry(DOC, invoice_schema, mock)
++    assert result.valid is True
++    assert result.attempts == 1
++    assert result.data["vendor"] == "Acme Corp"
++
++
++# ------------------------------------------------------------------ #
++# Retry path â€” wrong first, correct second
++# ------------------------------------------------------------------ #
++
++
++def test_retry_corrects_wrong_first_attempt(invoice_schema):
++    """Mock returns a broken result first, a valid one second â€” pipeline retries once."""
++    mock = MockExtractor([
++        # Attempt 1: missing amount, bad date
++        {"vendor": "Acme Corp", "issued_on": "15/01/2024"},
++        # Attempt 2: all correct
++        {"vendor": "Acme Corp", "amount": 250.0, "issued_on": "2024-01-15"},
++    ])
++    result = extract_with_retry(DOC, invoice_schema, mock, max_retries=2)
++    assert result.valid is True
++    assert result.attempts == 2
++    assert mock.call_count == 2
++
++
++def test_retry_uses_max_retries(invoice_schema):
++    """If all attempts fail, result.valid is False but best data is returned."""
++    mock = MockExtractor([
++        {"vendor": None},
++        {"vendor": "Acme"},
++        {"vendor": "Acme"},  # still missing amount & date
++    ])
++    result = extract_with_retry(DOC, invoice_schema, mock, max_retries=2)
++    assert result.valid is False
++    assert result.attempts == 3  # 1 initial + 2 retries
++
++
++def test_no_retry_when_max_retries_zero(invoice_schema):
++    mock = MockExtractor([{"vendor": None}])
++    result = extract_with_retry(DOC, invoice_schema, mock, max_retries=0)
++    assert result.attempts == 1
++    assert result.valid is False
++
++
++def test_all_attempts_recorded(invoice_schema):
++    mock = MockExtractor([
++        {"vendor": None},
++        {"vendor": "Acme Corp", "amount": 100.0, "issued_on": "2024-06-01"},
++    ])
++    result = extract_with_retry(DOC, invoice_schema, mock, max_retries=2)
++    assert len(result.all_attempts) == 2
++    assert result.all_attempts[0][0]["vendor"] is None
++    assert result.all_attempts[1][0]["vendor"] == "Acme Corp"
++
++
++# ------------------------------------------------------------------ #
++# Best-result selection
++# ------------------------------------------------------------------ #
++
++
++def test_best_result_has_fewest_errors(invoice_schema):
++    """When retries don't fully fix things, the attempt with fewest errors is returned."""
++    mock = MockExtractor([
++        # attempt 1: 3 errors (missing all)
++        {},
++        # attempt 2: 1 error (missing issued_on)
++        {"vendor": "Acme", "amount": 100.0},
++        # attempt 3: still 1 error, same count â€” later wins
++        {"vendor": "Beta", "amount": 50.0},
++    ])
++    result = extract_with_retry(DOC, invoice_schema, mock, max_retries=2)
++    # Both attempt 2 and 3 have 1 error; tie goes to later attempt
++    assert result.data["vendor"] == "Beta"
++    assert result.valid is False
++    assert len(result.errors) == 1
++
++
++# ------------------------------------------------------------------ #
++# ExtractionResult structure
++# ------------------------------------------------------------------ #
++
++
++def test_extraction_result_is_dataclass(invoice_schema):
++    mock = MockExtractor([{"vendor": "X", "amount": 1.0, "issued_on": "2024-01-01"}])
++    result = extract_with_retry(DOC, invoice_schema, mock)
++    assert isinstance(result, ExtractionResult)
++    assert isinstance(result.data, dict)
++    assert isinstance(result.errors, list)

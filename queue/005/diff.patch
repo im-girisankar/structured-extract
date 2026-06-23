@@ -1,0 +1,115 @@
+diff --git a/src/structured_extract/confidence.py b/src/structured_extract/confidence.py
+new file mode 100644
+index 0000000..b0efb12
+--- /dev/null
++++ b/src/structured_extract/confidence.py
+@@ -0,0 +1,109 @@
++"""Per-field confidence scoring.
++
++Heuristic definition
++--------------------
++The confidence score is a float in [0.0, 1.0] computed per field:
++
++  1.0  â€” field is present AND passes validation without any type coercion
++          (value already has the canonical Python type for the declared field type).
++  0.7  â€” field is present but required a *coercion* to be valid:
++          - int/float stored as a numeric string ("42", "3.14")
++          - bool stored as a recognised string ("true", "false", "yes", â€¦)
++          - str value that is actually an int/float (will be accepted as str by
++            the validator but signals extraction uncertainty)
++  0.0  â€” field is absent (missing) OR fails validation (type / format error).
++
++The function does NOT re-run validation; it inspects the raw value and the
++declared FieldSpec to determine the canonical-vs-coerced distinction itself
++so that it can be called on partially-invalid dicts too.
++"""
++
++from __future__ import annotations
++
++import re
++from typing import Any
++
++from structured_extract.schema import FieldSpec, Schema
++
++_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
++_BOOL_STRINGS = frozenset({"true", "false", "yes", "no", "1", "0", "on", "off"})
++
++
++def _field_confidence(spec: FieldSpec, value: Any) -> float:  # noqa: ANN401
++    """Score one field.  Returns 1.0, 0.7, or 0.0."""
++    t = spec.type
++
++    if t == "str":
++        if isinstance(value, str):
++            return 1.0
++        # LLM might return int/float for a str field â€” coercion
++        if isinstance(value, (int, float)) and not isinstance(value, bool):
++            return 0.7
++        return 0.0
++
++    if t == "int":
++        if isinstance(value, bool):
++            return 0.0
++        if isinstance(value, int):
++            return 1.0
++        if isinstance(value, str):
++            try:
++                int(value)
++                return 0.7  # numeric string â€” coerced
++            except ValueError:
++                pass
++        return 0.0
++
++    if t == "float":
++        if isinstance(value, bool):
++            return 0.0
++        if isinstance(value, (int, float)):
++            return 1.0
++        if isinstance(value, str):
++            try:
++                float(value)
++                return 0.7  # numeric string â€” coerced
++            except ValueError:
++                pass
++        return 0.0
++
++    if t == "bool":
++        if isinstance(value, bool):
++            return 1.0
++        if isinstance(value, str) and value.lower() in _BOOL_STRINGS:
++            return 0.7
++        return 0.0
++
++    if t == "date":
++        if isinstance(value, str) and _DATE_RE.match(value):
++            return 1.0
++        return 0.0
++
++    if t == "list":
++        if isinstance(value, list):
++            return 1.0
++        return 0.0
++
++    # Unknown type â€” treat as invalid
++    return 0.0
++
++
++def compute_confidence(data: dict, schema: Schema) -> dict[str, float]:
++    """Compute per-field confidence scores for *data* against *schema*.
++
++    Args:
++        data: Extracted dict (may be incomplete or partially invalid).
++        schema: Schema defining expected fields and types.
++
++    Returns:
++        Dict mapping field name â†’ confidence in [0.0, 1.0].
++        Fields absent from *data* get 0.0.
++        Fields present in *data* but absent from *schema* are not scored.
++    """
++    scores: dict[str, float] = {}
++    for spec in schema.fields:
++        if spec.name not in data:
++            scores[spec.name] = 0.0
++        else:
++            scores[spec.name] = _field_confidence(spec, data[spec.name])
++    return scores

@@ -1,0 +1,19 @@
+diff --git a/examples/doc2.txt b/examples/doc2.txt
+new file mode 100644
+index 0000000..1375101
+--- /dev/null
++++ b/examples/doc2.txt
+@@ -0,0 +1,13 @@
++Receipt
++
++From: ByteWorks Pvt. Ltd.
++Reference: RCP-8821
++Issued: January 5, 2024
++
++Services rendered:
++  * Data pipeline design consultation  Rs 45,000
++  * Proof-of-concept implementation    Rs 80,000
++
++Total amount due: Rs 1,25,000
++Currency: INR
++Status: Paid in full on 2024-01-08

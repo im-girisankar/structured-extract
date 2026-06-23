@@ -1,0 +1,131 @@
+diff --git a/src/structured_extract/pipeline.py b/src/structured_extract/pipeline.py
+new file mode 100644
+index 0000000..a8f2d10
+--- /dev/null
++++ b/src/structured_extract/pipeline.py
+@@ -0,0 +1,125 @@
++"""Self-correction pipeline: extract_with_retry.
++
++Algorithm
++---------
++1. Call extractor.extract(text, schema) â†’ raw dict.
++2. Validate raw dict â†’ list[FieldError].
++3. If no errors: return immediately (success).
++4. If retries remain: build a new LLMExtractor (or re-use MockExtractor) with
++   the previous result and error list injected as correction context, then
++   re-call extract.  Repeat up to *max_retries* additional attempts.
++5. Return ExtractionResult with the best result found (fewest errors) and
++   whether it ultimately passed validation.
++
++For non-LLM extractors (e.g. MockExtractor) the same extractor object is
++called again so the mock can cycle through its scripted responses.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass, field
++
++from structured_extract.extractor import Extractor, LLMExtractor
++from structured_extract.schema import Schema
++from structured_extract.validator import FieldError, validate
++
++
++@dataclass
++class ExtractionResult:
++    """Container returned by :func:`extract_with_retry`.
++
++    Attributes:
++        data: The best extracted dict (fewest validation errors).
++        errors: Validation errors on *data* (empty â†’ fully valid).
++        attempts: Total extraction calls made (1 = no retry needed).
++        valid: True when *errors* is empty.
++        all_attempts: List of (data, errors) tuples for every attempt,
++                      in order.  Useful for debugging / logging.
++    """
++
++    data: dict
++    errors: list[FieldError]
++    attempts: int
++    valid: bool
++    all_attempts: list[tuple[dict, list[FieldError]]] = field(default_factory=list)
++
++
++def extract_with_retry(
++    text: str,
++    schema: Schema,
++    extractor: Extractor,
++    max_retries: int = 2,
++) -> ExtractionResult:
++    """Extract structured data with automatic self-correction retries.
++
++    Args:
++        text: Raw document text to extract from.
++        schema: Schema defining the expected output structure.
++        extractor: Any object satisfying the :class:`~structured_extract.extractor.Extractor`
++                   protocol.  For real usage pass an :class:`~structured_extract.extractor.LLMExtractor`;
++                   for tests pass a :class:`~structured_extract.extractor.MockExtractor`.
++        max_retries: Maximum number of *additional* extraction attempts after the
++                     first one fails.  Total calls = max_retries + 1.
++
++    Returns:
++        :class:`ExtractionResult` with the best dict found and whether it is valid.
++
++    Retry semantics
++    ~~~~~~~~~~~~~~~
++    - On each retry the pipeline inspects *extractor*:
++      - If it is an :class:`~structured_extract.extractor.LLMExtractor`, a new
++        instance is constructed with the previous result and error list injected
++        into the correction prompt.
++      - Otherwise (MockExtractor, custom) the same extractor is called again so
++        it can advance through its scripted responses.
++    - "Best" is defined as fewest validation errors.  On a tie the later attempt
++      wins (more context = likely better).
++    """
++    all_attempts: list[tuple[dict, list[FieldError]]] = []
++    best_data: dict = {}
++    best_errors: list[FieldError] = []
++
++    current_extractor = extractor
++
++    for attempt in range(max_retries + 1):
++        data = current_extractor.extract(text, schema)
++        errors = validate(data, schema)
++        all_attempts.append((dict(data), list(errors)))
++
++        # Track the best result (fewer errors wins; tie â†’ prefer newer)
++        if attempt == 0 or len(errors) <= len(best_errors):
++            best_data = data
++            best_errors = errors
++
++        if not errors:
++            # Fully valid â€” stop early
++            return ExtractionResult(
++                data=best_data,
++                errors=best_errors,
++                attempts=attempt + 1,
++                valid=True,
++                all_attempts=all_attempts,
++            )
++
++        # Prepare correction context for next attempt
++        if attempt < max_retries:
++            error_strings = [str(e) for e in errors]
++            if isinstance(current_extractor, LLMExtractor):
++                # Build a correction-mode LLMExtractor
++                current_extractor = LLMExtractor(
++                    model=current_extractor.model,
++                    api_key=current_extractor.api_key,
++                    max_tokens=current_extractor.max_tokens,
++                    previous_result=data,
++                    previous_errors=error_strings,
++                )
++            # For MockExtractor and custom extractors: call the same object again;
++            # the mock cycles through scripted responses internally.
++
++    return ExtractionResult(
++        data=best_data,
++        errors=best_errors,
++        attempts=max_retries + 1,
++        valid=False,
++        all_attempts=all_attempts,
++    )

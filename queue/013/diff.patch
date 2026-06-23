@@ -1,0 +1,144 @@
+diff --git a/tests/test_confidence.py b/tests/test_confidence.py
+new file mode 100644
+index 0000000..b89a27d
+--- /dev/null
++++ b/tests/test_confidence.py
+@@ -0,0 +1,138 @@
++"""Tests for confidence.py â€” compute_confidence heuristic."""
++
++import pytest
++
++from structured_extract.confidence import compute_confidence
++from structured_extract.schema import FieldSpec, Schema
++
++
++def _schema(*specs: FieldSpec) -> Schema:
++    return Schema(fields=list(specs))
++
++
++# ------------------------------------------------------------------ #
++# Fully present and canonically-typed â†’ 1.0
++# ------------------------------------------------------------------ #
++
++
++def test_confidence_str_present():
++    schema = _schema(FieldSpec("name", "str"))
++    scores = compute_confidence({"name": "Alice"}, schema)
++    assert scores["name"] == 1.0
++
++
++def test_confidence_int_present():
++    schema = _schema(FieldSpec("age", "int"))
++    scores = compute_confidence({"age": 30}, schema)
++    assert scores["age"] == 1.0
++
++
++def test_confidence_float_present():
++    schema = _schema(FieldSpec("price", "float"))
++    scores = compute_confidence({"price": 9.99}, schema)
++    assert scores["price"] == 1.0
++
++
++def test_confidence_bool_present():
++    schema = _schema(FieldSpec("active", "bool"))
++    scores = compute_confidence({"active": True}, schema)
++    assert scores["active"] == 1.0
++
++
++def test_confidence_date_present():
++    schema = _schema(FieldSpec("dob", "date"))
++    scores = compute_confidence({"dob": "1990-07-04"}, schema)
++    assert scores["dob"] == 1.0
++
++
++def test_confidence_list_present():
++    schema = _schema(FieldSpec("tags", "list"))
++    scores = compute_confidence({"tags": ["a", "b"]}, schema)
++    assert scores["tags"] == 1.0
++
++
++# ------------------------------------------------------------------ #
++# Missing field â†’ 0.0
++# ------------------------------------------------------------------ #
++
++
++def test_confidence_missing_field():
++    schema = _schema(FieldSpec("amount", "float"))
++    scores = compute_confidence({}, schema)
++    assert scores["amount"] == 0.0
++
++
++# ------------------------------------------------------------------ #
++# Coercion cases â†’ 0.7
++# ------------------------------------------------------------------ #
++
++
++def test_confidence_int_as_string_coerced():
++    schema = _schema(FieldSpec("count", "int"))
++    scores = compute_confidence({"count": "42"}, schema)
++    assert scores["count"] == pytest.approx(0.7)
++
++
++def test_confidence_float_as_string_coerced():
++    schema = _schema(FieldSpec("price", "float"))
++    scores = compute_confidence({"price": "3.14"}, schema)
++    assert scores["price"] == pytest.approx(0.7)
++
++
++def test_confidence_bool_as_string_coerced():
++    schema = _schema(FieldSpec("active", "bool"))
++    scores = compute_confidence({"active": "true"}, schema)
++    assert scores["active"] == pytest.approx(0.7)
++
++
++def test_confidence_str_field_with_numeric_value_coerced():
++    """LLM returns 42 (int) for a str field â€” should be 0.7 not 0.0."""
++    schema = _schema(FieldSpec("label", "str"))
++    scores = compute_confidence({"label": 42}, schema)
++    assert scores["label"] == pytest.approx(0.7)
++
++
++# ------------------------------------------------------------------ #
++# Invalid / wrong type â†’ 0.0
++# ------------------------------------------------------------------ #
++
++
++def test_confidence_date_bad_format():
++    schema = _schema(FieldSpec("dob", "date"))
++    scores = compute_confidence({"dob": "04/07/1990"}, schema)
++    assert scores["dob"] == 0.0
++
++
++def test_confidence_bool_invalid_string():
++    schema = _schema(FieldSpec("active", "bool"))
++    scores = compute_confidence({"active": "maybe"}, schema)
++    assert scores["active"] == 0.0
++
++
++def test_confidence_int_bool_zero():
++    """True/False must not pass as int â€” score 0.0."""
++    schema = _schema(FieldSpec("count", "int"))
++    scores = compute_confidence({"count": True}, schema)
++    assert scores["count"] == 0.0
++
++
++# ------------------------------------------------------------------ #
++# Multiple fields
++# ------------------------------------------------------------------ #
++
++
++def test_confidence_mixed_fields():
++    schema = _schema(
++        FieldSpec("vendor", "str"),
++        FieldSpec("amount", "float"),
++        FieldSpec("issued_on", "date"),
++    )
++    data = {
++        "vendor": "Acme",     # present, correct type â†’ 1.0
++        "amount": "99.50",    # coerced string â†’ 0.7
++        # issued_on missing  â†’ 0.0
++    }
++    scores = compute_confidence(data, schema)
++    assert scores["vendor"] == 1.0
++    assert scores["amount"] == pytest.approx(0.7)
++    assert scores["issued_on"] == 0.0

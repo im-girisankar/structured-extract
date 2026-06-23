@@ -39,3 +39,6 @@ Thumbs.db
 # Secrets
 .env
 *.key
+
+# drip scratch
+.drip/_*

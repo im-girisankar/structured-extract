@@ -1,0 +1,75 @@
+diff --git a/tests/test_schema.py b/tests/test_schema.py
+new file mode 100644
+index 0000000..bd249f4
+--- /dev/null
++++ b/tests/test_schema.py
+@@ -0,0 +1,69 @@
++"""Tests for schema.py â€” FieldSpec, Schema, Schema.from_dict."""
++
++import pytest
++
++from structured_extract.schema import FieldSpec, Schema
++
++
++def test_fieldspec_valid_types():
++    for t in ("str", "int", "float", "bool", "date", "list"):
++        spec = FieldSpec(name="x", type=t)
++        assert spec.type == t
++
++
++def test_fieldspec_invalid_type_raises():
++    with pytest.raises(ValueError, match="Unknown field type"):
++        FieldSpec(name="x", type="datetime")  # type: ignore[arg-type]
++
++
++def test_schema_field_map():
++    schema = Schema(
++        fields=[
++            FieldSpec("name", "str"),
++            FieldSpec("age", "int"),
++        ]
++    )
++    fm = schema.field_map()
++    assert set(fm.keys()) == {"name", "age"}
++    assert fm["age"].type == "int"
++
++
++def test_schema_to_json_schema_required():
++    schema = Schema(
++        fields=[
++            FieldSpec("vendor", "str", required=True, description="Supplier name"),
++            FieldSpec("notes", "str", required=False),
++        ]
++    )
++    js = schema.to_json_schema()
++    assert js["required"] == ["vendor"]
++    assert "notes" not in js.get("required", [])
++    assert js["properties"]["vendor"]["description"] == "Supplier name"
++
++
++def test_schema_date_field_gets_format():
++    schema = Schema(fields=[FieldSpec("issued_on", "date")])
++    js = schema.to_json_schema()
++    assert js["properties"]["issued_on"]["format"] == "date"
++
++
++def test_schema_from_dict_roundtrip():
++    raw = {
++        "name": "invoice",
++        "fields": [
++            {"name": "vendor", "type": "str", "required": True, "description": "Seller"},
++            {"name": "total", "type": "float", "required": True},
++            {"name": "tags", "type": "list", "required": False},
++        ],
++    }
++    schema = Schema.from_dict(raw)
++    assert schema.name == "invoice"
++    assert len(schema.fields) == 3
++    assert schema.fields[2].required is False
++
++
++def test_schema_from_dict_defaults():
++    raw = {"fields": [{"name": "x", "type": "bool"}]}
++    schema = Schema.from_dict(raw)
++    assert schema.name == "schema"
++    assert schema.fields[0].required is True

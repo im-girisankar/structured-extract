@@ -1,0 +1,151 @@
+diff --git a/src/structured_extract/eval.py b/src/structured_extract/eval.py
+new file mode 100644
+index 0000000..1e96e98
+--- /dev/null
++++ b/src/structured_extract/eval.py
+@@ -0,0 +1,145 @@
++"""Evaluation metrics: per-field precision and recall against gold dicts.
++
++Definitions (per field, treating values as presence/absence):
++  precision = TP / (TP + FP)
++    TP = field present in extraction AND value matches gold
++    FP = field present in extraction AND value does NOT match gold (or field
++         not in gold at all)
++  recall    = TP / (TP + FN)
++    FN = field present in gold but absent in extraction, OR present in
++         extraction with an INCORRECT value (wrong value is a missed gold value)
++
++"Match" uses string-normalised equality: both values are converted to str,
++lowercased, and whitespace-collapsed before comparison.  This is intentionally
++loose so that "42" == 42 and "  Acme Corp  " == "acme corp" count as matches.
++
++Aggregate metrics are micro-averages across all fields in the gold set.
++"""
++
++from __future__ import annotations
++
++from dataclasses import dataclass
++from typing import Any
++
++
++def _normalise(value: Any) -> str:  # noqa: ANN401
++    """Normalise a value to a comparable string."""
++    return " ".join(str(value).lower().split())
++
++
++def _matches(extracted: Any, gold: Any) -> bool:  # noqa: ANN401
++    """Return True if the normalised string representations are equal."""
++    return _normalise(extracted) == _normalise(gold)
++
++
++@dataclass
++class FieldMetrics:
++    """Per-field precision/recall/F1."""
++
++    field: str
++    precision: float
++    recall: float
++    f1: float
++    tp: int
++    fp: int
++    fn: int
++
++    @classmethod
++    def compute(cls, field: str, tp: int, fp: int, fn: int) -> FieldMetrics:
++        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
++        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
++        f1 = (
++            2 * precision * recall / (precision + recall)
++            if (precision + recall) > 0
++            else 0.0
++        )
++        return cls(field=field, precision=precision, recall=recall, f1=f1, tp=tp, fp=fp, fn=fn)
++
++
++@dataclass
++class EvalResult:
++    """Aggregated evaluation result across a dataset of (extraction, gold) pairs.
++
++    Attributes:
++        field_metrics: Per-field :class:`FieldMetrics`.
++        micro_precision: TP_total / (TP_total + FP_total).
++        micro_recall: TP_total / (TP_total + FN_total).
++        micro_f1: Harmonic mean of micro precision/recall.
++    """
++
++    field_metrics: dict[str, FieldMetrics]
++    micro_precision: float
++    micro_recall: float
++    micro_f1: float
++
++
++def evaluate(
++    extractions: list[dict],
++    gold_dicts: list[dict],
++    fields: list[str] | None = None,
++) -> EvalResult:
++    """Compute per-field precision/recall/F1 across multiple examples.
++
++    Args:
++        extractions: List of extracted dicts (one per document).
++        gold_dicts: Parallel list of gold-standard dicts.
++        fields: Which fields to evaluate.  Defaults to the union of keys
++                present in all gold dicts.
++
++    Returns:
++        :class:`EvalResult` with per-field and micro-aggregate metrics.
++    """
++    if len(extractions) != len(gold_dicts):
++        raise ValueError("extractions and gold_dicts must have the same length")
++
++    # Determine fields to evaluate
++    if fields is None:
++        all_fields: set[str] = set()
++        for g in gold_dicts:
++            all_fields |= set(g.keys())
++        fields = sorted(all_fields)
++
++    # Accumulate TP/FP/FN per field
++    tp_per: dict[str, int] = {f: 0 for f in fields}
++    fp_per: dict[str, int] = {f: 0 for f in fields}
++    fn_per: dict[str, int] = {f: 0 for f in fields}
++
++    for ext, gold in zip(extractions, gold_dicts, strict=False):
++        for f in fields:
++            in_ext = f in ext
++            in_gold = f in gold
++
++            if in_ext and in_gold:
++                if _matches(ext[f], gold[f]):
++                    tp_per[f] += 1
++                else:
++                    fp_per[f] += 1  # wrong value hallucinated
++                    fn_per[f] += 1  # gold value missed
++            elif in_ext and not in_gold:
++                fp_per[f] += 1  # hallucinated
++            elif not in_ext and in_gold:
++                fn_per[f] += 1  # missed
++            # not in either â†’ skip
++
++    field_metrics: dict[str, FieldMetrics] = {
++        f: FieldMetrics.compute(f, tp_per[f], fp_per[f], fn_per[f]) for f in fields
++    }
++
++    total_tp = sum(tp_per.values())
++    total_fp = sum(fp_per.values())
++    total_fn = sum(fn_per.values())
++
++    micro_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
++    micro_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
++    micro_f1 = (
++        2 * micro_precision * micro_recall / (micro_precision + micro_recall)
++        if (micro_precision + micro_recall) > 0
++        else 0.0
++    )
++
++    return EvalResult(
++        field_metrics=field_metrics,
++        micro_precision=micro_precision,
++        micro_recall=micro_recall,
++        micro_f1=micro_f1,
++    )

@@ -1,0 +1,3 @@
+Add tests for __init__
+
+(part of m2 milestone work)

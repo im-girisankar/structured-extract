@@ -1,0 +1,27 @@
+diff --git a/examples/doc1.txt b/examples/doc1.txt
+new file mode 100644
+index 0000000..303788c
+--- /dev/null
++++ b/examples/doc1.txt
+@@ -0,0 +1,21 @@
++INVOICE
++
++Vendor: Acme Supplies Ltd.
++Invoice No: INV-2024-001
++Date: 2024-03-10
++
++Bill To:
++  Horizon Tech Solutions
++  12 Innovation Drive, Kochi 682 001
++
++Items:
++  - Cloud Storage Subscription (12 months)  $1,200.00
++  - Priority Support Package                  $300.00
++
++Subtotal:   $1,500.00
++Tax (18%):    $270.00
++TOTAL:      $1,770.00
++
++Currency: USD
++Payment Status: UNPAID
++Due Date: 2024-04-10

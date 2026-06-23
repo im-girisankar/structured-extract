@@ -1,0 +1,226 @@
+diff --git a/src/structured_extract/validator.py b/src/structured_extract/validator.py
+new file mode 100644
+index 0000000..11e4645
+--- /dev/null
++++ b/src/structured_extract/validator.py
+@@ -0,0 +1,220 @@
++"""Schema validation: check extracted dicts against a Schema.
++
++Returns a list of FieldError objects (empty list = valid).
++
++Validation rules per type:
++  str   â€” value must be a str (or coercible from int/float; logged as coerce)
++  int   â€” value must be int or a string containing a plain integer
++  float â€” value must be int/float or a string containing a number
++  bool  â€” value must be bool or one of the recognised truthy/falsy strings
++  date  â€” value must be a str matching YYYY-MM-DD
++  list  â€” value must be a list
++"""
++
++from __future__ import annotations
++
++import re
++from dataclasses import dataclass
++from typing import Any
++
++from structured_extract.schema import FieldSpec, Schema
++
++_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
++
++
++@dataclass
++class FieldError:
++    """A single validation error for one field.
++
++    Attributes:
++        field: The field name that failed.
++        error_type: One of ``missing``, ``type``, ``format``.
++        message: Human-readable description of the problem.
++    """
++
++    field: str
++    error_type: str  # "missing" | "type" | "format"
++    message: str
++
++    def __str__(self) -> str:
++        return f"[{self.error_type}] {self.field}: {self.message}"
++
++
++# ------------------------------------------------------------------ #
++# Per-type checkers
++# ------------------------------------------------------------------ #
++
++
++def _check_str(spec: FieldSpec, value: Any) -> list[FieldError]:  # noqa: ANN401
++    if not isinstance(value, str):
++        return [
++            FieldError(
++                field=spec.name,
++                error_type="type",
++                message=f"Expected str, got {type(value).__name__!r}",
++            )
++        ]
++    return []
++
++
++def _check_int(spec: FieldSpec, value: Any) -> list[FieldError]:  # noqa: ANN401
++    if isinstance(value, bool):
++        return [
++            FieldError(
++                field=spec.name,
++                error_type="type",
++                message="Expected int, got bool",
++            )
++        ]
++    if isinstance(value, int):
++        return []
++    if isinstance(value, str):
++        try:
++            int(value)
++            return []
++        except ValueError:
++            pass
++    return [
++        FieldError(
++            field=spec.name,
++            error_type="type",
++            message=f"Expected int, got {type(value).__name__!r} value {value!r}",
++        )
++    ]
++
++
++def _check_float(spec: FieldSpec, value: Any) -> list[FieldError]:  # noqa: ANN401
++    if isinstance(value, bool):
++        return [
++            FieldError(
++                field=spec.name,
++                error_type="type",
++                message="Expected float/number, got bool",
++            )
++        ]
++    if isinstance(value, (int, float)):
++        return []
++    if isinstance(value, str):
++        try:
++            float(value)
++            return []
++        except ValueError:
++            pass
++    return [
++        FieldError(
++            field=spec.name,
++            error_type="type",
++            message=f"Expected float/number, got {type(value).__name__!r} value {value!r}",
++        )
++    ]
++
++
++_BOOL_TRUTHY = {"true", "yes", "1", "on"}
++_BOOL_FALSY = {"false", "no", "0", "off"}
++
++
++def _check_bool(spec: FieldSpec, value: Any) -> list[FieldError]:  # noqa: ANN401
++    if isinstance(value, bool):
++        return []
++    if isinstance(value, str) and value.lower() in (_BOOL_TRUTHY | _BOOL_FALSY):
++        return []
++    return [
++        FieldError(
++            field=spec.name,
++            error_type="type",
++            message=f"Expected bool, got {type(value).__name__!r} value {value!r}",
++        )
++    ]
++
++
++def _check_date(spec: FieldSpec, value: Any) -> list[FieldError]:  # noqa: ANN401
++    if not isinstance(value, str):
++        return [
++            FieldError(
++                field=spec.name,
++                error_type="type",
++                message=f"Expected ISO date string, got {type(value).__name__!r}",
++            )
++        ]
++    if not _DATE_RE.match(value):
++        return [
++            FieldError(
++                field=spec.name,
++                error_type="format",
++                message=f"Date {value!r} does not match YYYY-MM-DD",
++            )
++        ]
++    return []
++
++
++def _check_list(spec: FieldSpec, value: Any) -> list[FieldError]:  # noqa: ANN401
++    if not isinstance(value, list):
++        return [
++            FieldError(
++                field=spec.name,
++                error_type="type",
++                message=f"Expected list, got {type(value).__name__!r}",
++            )
++        ]
++    return []
++
++
++_CHECKERS = {
++    "str": _check_str,
++    "int": _check_int,
++    "float": _check_float,
++    "bool": _check_bool,
++    "date": _check_date,
++    "list": _check_list,
++}
++
++
++# ------------------------------------------------------------------ #
++# Public API
++# ------------------------------------------------------------------ #
++
++
++def validate(data: dict, schema: Schema) -> list[FieldError]:
++    """Validate *data* against *schema*, returning a (possibly empty) error list.
++
++    Args:
++        data: The dict returned by an extractor.
++        schema: The Schema that defines expected fields and types.
++
++    Returns:
++        List of :class:`FieldError`.  Empty list means the data is valid.
++    """
++    errors: list[FieldError] = []
++    field_map = schema.field_map()
++
++    for spec in schema.fields:
++        if spec.name not in data:
++            if spec.required:
++                errors.append(
++                    FieldError(
++                        field=spec.name,
++                        error_type="missing",
++                        message=f"Required field {spec.name!r} is absent",
++                    )
++                )
++            # optional missing fields are fine
++            continue
++
++        value = data[spec.name]
++        checker = _CHECKERS.get(spec.type)
++        if checker:
++            errors.extend(checker(spec, value))
++
++    # Warn about extra keys not in schema (soft warning, not an error)
++    schema_keys = set(field_map.keys())
++    extra_keys = set(data.keys()) - schema_keys
++    for key in sorted(extra_keys):
++        errors.append(
++            FieldError(
++                field=key,
++                error_type="type",
++                message=f"Field {key!r} is not defined in the schema",
++            )
++        )
++
++    return errors

@@ -1,0 +1,53 @@
+diff --git a/examples/schema.json b/examples/schema.json
+new file mode 100644
+index 0000000..32c9798
+--- /dev/null
++++ b/examples/schema.json
+@@ -0,0 +1,47 @@
++{
++  "name": "invoice",
++  "fields": [
++    {
++      "name": "vendor",
++      "type": "str",
++      "required": true,
++      "description": "Name of the vendor or supplier"
++    },
++    {
++      "name": "invoice_number",
++      "type": "str",
++      "required": false,
++      "description": "Invoice reference number"
++    },
++    {
++      "name": "amount",
++      "type": "float",
++      "required": true,
++      "description": "Total invoice amount (numeric, no currency symbol)"
++    },
++    {
++      "name": "currency",
++      "type": "str",
++      "required": false,
++      "description": "Three-letter ISO currency code, e.g. USD"
++    },
++    {
++      "name": "issued_on",
++      "type": "date",
++      "required": true,
++      "description": "Invoice issue date in YYYY-MM-DD format"
++    },
++    {
++      "name": "line_items",
++      "type": "list",
++      "required": false,
++      "description": "List of item descriptions"
++    },
++    {
++      "name": "paid",
++      "type": "bool",
++      "required": false,
++      "description": "Whether the invoice has been paid"
++    }
++  ]
++}
