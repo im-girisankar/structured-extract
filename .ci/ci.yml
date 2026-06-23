@@ -1,0 +1,15 @@
+# CI configuration (parked — not under .github/ intentionally)
+# Run locally with:
+#   pip install -e ".[dev]"
+#   ruff check src tests
+#   pytest
+
+steps:
+  - name: Install dev dependencies
+    run: pip install -e ".[dev]"
+
+  - name: Lint with ruff
+    run: ruff check src tests
+
+  - name: Run tests
+    run: pytest
