@@ -1,0 +1,26 @@
+[
+  {
+    "vendor": "Acme Supplies Ltd.",
+    "invoice_number": "INV-2024-001",
+    "amount": 1770.0,
+    "currency": "USD",
+    "issued_on": "2024-03-10",
+    "paid": false
+  },
+  {
+    "vendor": "ByteWorks Pvt. Ltd.",
+    "invoice_number": "RCP-8821",
+    "amount": 125000.0,
+    "currency": "INR",
+    "issued_on": "2024-01-05",
+    "paid": true
+  },
+  {
+    "vendor": "MedEquip Distributors",
+    "invoice_number": "ME-2024-0392",
+    "amount": 1058.5,
+    "currency": "USD",
+    "issued_on": "2024-02-15",
+    "paid": false
+  }
+]
